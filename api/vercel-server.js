@@ -1,23 +1,16 @@
 const http = require('http');
 const url = require('url');
+const { neon } = require('@neondatabase/serverless');
 
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
+const DATABASE_URL = process.env.DATABASE_URL;
 
-const categories = [
-  { id: '1', name: '美食', sort: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-  { id: '2', name: '饮品', sort: 2, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
-  { id: '3', name: '日用品', sort: 3, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
-];
+const sql = DATABASE_URL ? neon(DATABASE_URL) : null;
 
-const products = [
-  { id: '1', name: '红烧肉盖饭', price: 28.8, stock: 50, cover: 'https://picsum.photos/seed/food1/400/400', description: '精选五花肉，慢火红烧', categoryId: '1' },
-  { id: '2', name: '宫保鸡丁', price: 32.0, stock: 30, cover: 'https://picsum.photos/seed/food2/400/400', description: '经典川菜', categoryId: '1' },
-  { id: '3', name: '柠檬水', price: 8.0, stock: 100, cover: 'https://picsum.photos/seed/drink1/400/400', description: '新鲜柠檬', categoryId: '2' },
-  { id: '4', name: '珍珠奶茶', price: 15.0, stock: 80, cover: 'https://picsum.photos/seed/drink2/400/400', description: '经典奶茶', categoryId: '2' },
-  { id: '5', name: '纸巾', price: 2.5, stock: 200, cover: 'https://picsum.photos/seed/daily1/400/400', description: '柔软纸巾', categoryId: '3' }
-];
-
+let isInitialized = false;
+let categories = [];
+let products = [];
 const tokens = new Map();
 let idCounter = 100;
 
@@ -39,10 +32,6 @@ const getToken = (req) => {
   return auth.replace('Bearer ', '');
 };
 
-const isAuthenticated = (token) => {
-  return tokens.has(token);
-};
-
 const parseBody = (req) => {
   return new Promise((resolve) => {
     let body = '';
@@ -57,8 +46,44 @@ const parseBody = (req) => {
   });
 };
 
+const initializeData = async () => {
+  if (isInitialized || !sql) return;
+  
+  try {
+    const cats = await sql`SELECT * FROM categories ORDER BY sort ASC`;
+    const prods = await sql`SELECT * FROM products ORDER BY created_at DESC`;
+    
+    categories = cats.map(c => ({
+      id: c.id,
+      name: c.name,
+      sort: c.sort,
+      createdAt: c.created_at,
+      updatedAt: c.updated_at
+    }));
+    
+    products = prods.map(p => ({
+      id: p.id,
+      name: p.name,
+      price: parseFloat(p.price),
+      stock: p.stock,
+      cover: p.cover,
+      description: p.description,
+      categoryId: p.category_id,
+      createdAt: p.created_at,
+      updatedAt: p.updated_at
+    }));
+    
+    isInitialized = true;
+    console.log('Database initialized');
+  } catch (error) {
+    console.error('Failed to initialize data:', error.message);
+  }
+};
+
 const handleAuth = async (req, res, method, pathname, body) => {
   if (pathname === '/api/auth/login' && method === 'POST') {
+    await initializeData();
+    
     const { username, password } = body;
     if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
       const token = getNextId();
@@ -93,6 +118,8 @@ const handleAuth = async (req, res, method, pathname, body) => {
 const handleCategory = async (req, res, method, pathname, body, query) => {
   const token = getToken(req);
   
+  await initializeData();
+  
   if (pathname === '/api/category' && method === 'GET') {
     return createResponse(res, 200, { code: 200, data: categories, message: '获取成功' });
   }
@@ -107,39 +134,94 @@ const handleCategory = async (req, res, method, pathname, body, query) => {
   }
 
   if (pathname === '/api/category' && method === 'POST') {
-    if (!isAuthenticated(token)) {
+    if (!tokens.has(token)) {
       return createResponse(res, 401, { code: 401, data: null, message: '未登录' });
     }
-    const cat = {
-      id: getNextId(),
-      name: body.name,
-      sort: body.sort || 0,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
-    categories.push(cat);
-    return createResponse(res, 200, { code: 200, data: cat, message: '创建成功' });
+    
+    if (sql) {
+      try {
+        const result = await sql`
+          INSERT INTO categories (id, name, sort, created_at, updated_at)
+          VALUES (gen_random_uuid(), ${body.name}, ${body.sort || 0}, NOW(), NOW())
+          RETURNING *
+        `;
+        const cat = result[0];
+        categories.push({
+          id: cat.id,
+          name: cat.name,
+          sort: cat.sort,
+          createdAt: cat.created_at,
+          updatedAt: cat.updated_at
+        });
+        return createResponse(res, 200, { code: 200, data: categories[categories.length - 1], message: '创建成功' });
+      } catch (error) {
+        console.error('Create category error:', error);
+        return createResponse(res, 500, { code: 500, data: null, message: '创建失败' });
+      }
+    } else {
+      const cat = {
+        id: getNextId(),
+        name: body.name,
+        sort: body.sort || 0,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      categories.push(cat);
+      return createResponse(res, 200, { code: 200, data: cat, message: '创建成功' });
+    }
   }
 
   if (pathname === '/api/category' && method === 'PUT') {
-    if (!isAuthenticated(token)) {
+    if (!tokens.has(token)) {
       return createResponse(res, 401, { code: 401, data: null, message: '未登录' });
     }
-    const cat = categories.find(c => c.id === body.id);
-    if (!cat) {
-      return createResponse(res, 404, { code: 404, data: null, message: '分类不存在' });
+    
+    if (sql) {
+      try {
+        await sql`
+          UPDATE categories 
+          SET name = ${body.name}, sort = ${body.sort ?? 0}, updated_at = NOW()
+          WHERE id = ${body.id}
+        `;
+        const cat = categories.find(c => c.id === body.id);
+        if (cat) {
+          cat.name = body.name;
+          cat.sort = body.sort ?? cat.sort;
+          cat.updatedAt = new Date().toISOString();
+        }
+        return createResponse(res, 200, { code: 200, data: cat, message: '更新成功' });
+      } catch (error) {
+        console.error('Update category error:', error);
+        return createResponse(res, 500, { code: 500, data: null, message: '更新失败' });
+      }
+    } else {
+      const cat = categories.find(c => c.id === body.id);
+      if (!cat) {
+        return createResponse(res, 404, { code: 404, data: null, message: '分类不存在' });
+      }
+      cat.name = body.name;
+      cat.sort = body.sort ?? cat.sort;
+      cat.updatedAt = new Date().toISOString();
+      return createResponse(res, 200, { code: 200, data: cat, message: '更新成功' });
     }
-    cat.name = body.name;
-    cat.sort = body.sort ?? cat.sort;
-    cat.updatedAt = new Date().toISOString();
-    return createResponse(res, 200, { code: 200, data: cat, message: '更新成功' });
   }
 
   if (pathname.startsWith('/api/category/') && method === 'DELETE') {
-    if (!isAuthenticated(token)) {
+    if (!tokens.has(token)) {
       return createResponse(res, 401, { code: 401, data: null, message: '未登录' });
     }
+    
     const id = pathname.split('/')[3];
+    
+    if (sql) {
+      try {
+        await sql`DELETE FROM categories WHERE id = ${id}`;
+      } catch (error) {
+        console.error('Delete category error:', error);
+        return createResponse(res, 500, { code: 500, data: null, message: '删除失败' });
+      }
+    }
+    
     const index = categories.findIndex(c => c.id === id);
     if (index === -1) {
       return createResponse(res, 404, { code: 404, data: null, message: '分类不存在' });
@@ -153,6 +235,8 @@ const handleCategory = async (req, res, method, pathname, body, query) => {
 
 const handleProduct = async (req, res, method, pathname, body, query) => {
   const token = getToken(req);
+  
+  await initializeData();
   
   if (pathname === '/api/product' && method === 'GET') {
     let result = [...products];
@@ -184,23 +268,82 @@ const handleProduct = async (req, res, method, pathname, body, query) => {
   }
 
   if (pathname === '/api/product' && method === 'POST') {
-    if (!isAuthenticated(token)) {
+    if (!tokens.has(token)) {
       return createResponse(res, 401, { code: 401, data: null, message: '未登录' });
     }
-    const product = {
-      id: getNextId(),
-      ...body,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
-    products.push(product);
-    return createResponse(res, 200, { code: 200, data: product, message: '创建成功' });
+    
+    if (sql) {
+      try {
+        const result = await sql`
+          INSERT INTO products (id, name, price, stock, cover, description, category_id, created_at, updated_at)
+          VALUES (
+            gen_random_uuid(), 
+            ${body.name}, 
+            ${body.price}, 
+            ${body.stock}, 
+            ${body.cover || ''}, 
+            ${body.description || ''}, 
+            ${body.categoryId},
+            NOW(), 
+            NOW()
+          )
+          RETURNING *
+        `;
+        const p = result[0];
+        const product = {
+          id: p.id,
+          name: p.name,
+          price: parseFloat(p.price),
+          stock: p.stock,
+          cover: p.cover,
+          description: p.description,
+          categoryId: p.category_id,
+          createdAt: p.created_at,
+          updatedAt: p.updated_at
+        };
+        products.unshift(product);
+        return createResponse(res, 200, { code: 200, data: product, message: '创建成功' });
+      } catch (error) {
+        console.error('Create product error:', error);
+        return createResponse(res, 500, { code: 500, data: null, message: '创建失败' });
+      }
+    } else {
+      const product = {
+        id: getNextId(),
+        ...body,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      products.unshift(product);
+      return createResponse(res, 200, { code: 200, data: product, message: '创建成功' });
+    }
   }
 
   if (pathname === '/api/product' && method === 'PUT') {
-    if (!isAuthenticated(token)) {
+    if (!tokens.has(token)) {
       return createResponse(res, 401, { code: 401, data: null, message: '未登录' });
     }
+    
+    if (sql) {
+      try {
+        await sql`
+          UPDATE products 
+          SET 
+            name = ${body.name ?? ''}, 
+            price = ${body.price ?? 0}, 
+            stock = ${body.stock ?? 0}, 
+            cover = ${body.cover ?? ''}, 
+            description = ${body.description ?? ''}, 
+            category_id = ${body.categoryId ?? ''},
+            updated_at = NOW()
+          WHERE id = ${body.id}
+        `;
+      } catch (error) {
+        console.error('Update product error:', error);
+        return createResponse(res, 500, { code: 500, data: null, message: '更新失败' });
+      }
+    }
+    
     const product = products.find(p => p.id === body.id);
     if (!product) {
       return createResponse(res, 404, { code: 404, data: null, message: '商品不存在' });
@@ -210,10 +353,21 @@ const handleProduct = async (req, res, method, pathname, body, query) => {
   }
 
   if (pathname.startsWith('/api/product/') && method === 'DELETE') {
-    if (!isAuthenticated(token)) {
+    if (!tokens.has(token)) {
       return createResponse(res, 401, { code: 401, data: null, message: '未登录' });
     }
+    
     const id = pathname.split('/')[3];
+    
+    if (sql) {
+      try {
+        await sql`DELETE FROM products WHERE id = ${id}`;
+      } catch (error) {
+        console.error('Delete product error:', error);
+        return createResponse(res, 500, { code: 500, data: null, message: '删除失败' });
+      }
+    }
+    
     const index = products.findIndex(p => p.id === id);
     if (index === -1) {
       return createResponse(res, 404, { code: 404, data: null, message: '商品不存在' });

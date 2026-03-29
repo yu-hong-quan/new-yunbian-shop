@@ -19,15 +19,5 @@
       "src": "/(.*)",
       "dest": "/web/dist/index.html"
     }
-  ],
-  "env": {
-    "ADMIN_USERNAME": {
-      "description": "管理员用户名",
-      "value": "admin"
-    },
-    "ADMIN_PASSWORD": {
-      "description": "管理员密码",
-      "value": "admin123"
-    }
-  }
+  ]
 }
