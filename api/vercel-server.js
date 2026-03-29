@@ -1,12 +1,19 @@
 const http = require('http');
 const url = require('url');
-const { neon } = require('@neondatabase/serverless');
 
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
 const DATABASE_URL = process.env.DATABASE_URL;
 
-const sql = DATABASE_URL ? neon(DATABASE_URL) : null;
+let sql = null;
+if (DATABASE_URL) {
+  try {
+    const { neon } = require('@neondatabase/serverless');
+    sql = neon(DATABASE_URL);
+  } catch (e) {
+    console.error('Failed to initialize neon:', e.message);
+  }
+}
 
 let isInitialized = false;
 let categories = [];
@@ -45,6 +52,10 @@ const parseBody = (req) => {
     });
   });
 };
+
+console.log('[VERCEL] Server initialized');
+console.log('[VERCEL] DATABASE_URL:', DATABASE_URL ? 'set' : 'not set');
+console.log('[VERCEL] sql:', sql ? 'initialized' : 'null');
 
 const initializeData = async () => {
   if (isInitialized || !sql) return;
@@ -380,11 +391,29 @@ const handleProduct = async (req, res, method, pathname, body, query) => {
 };
 
 const handler = async (req, res) => {
-  const { pathname, query } = url.parse(req.url, true);
+  const parsedUrl = url.parse(req.url, true);
+  const pathname = parsedUrl.pathname;
+  const query = parsedUrl.query;
   const method = req.method;
+
+  console.log(`[VERCEL] ${method} ${pathname}`);
+  console.log(`[VERCEL] Full URL: ${req.url}`);
 
   if (method === 'OPTIONS') {
     return createResponse(res, 200, null);
+  }
+
+  // Health check endpoint
+  if (pathname === '/api/health' && method === 'GET') {
+    return createResponse(res, 200, {
+      code: 200,
+      data: {
+        status: 'ok',
+        timestamp: new Date().toISOString(),
+        DATABASE_URL: DATABASE_URL ? 'set' : 'not set'
+      },
+      message: 'Health check'
+    });
   }
 
   try {
@@ -399,9 +428,10 @@ const handler = async (req, res) => {
     result = await handleProduct(req, res, method, pathname, body, query);
     if (result) return;
 
+    console.log(`[VERCEL] No handler found for ${method} ${pathname}`);
     createResponse(res, 404, { code: 404, data: null, message: 'Not Found' });
   } catch (error) {
-    console.error('Error:', error);
+    console.error('[VERCEL] Error:', error);
     createResponse(res, 500, { code: 500, data: null, message: 'Internal Server Error' });
   }
 };
