@@ -1,9 +1,11 @@
 const http = require('http');
 const url = require('url');
+const crypto = require('crypto');
 
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
 const DATABASE_URL = process.env.DATABASE_URL;
+const TOKEN_EXPIRY_HOURS = 24;
 
 let sql = null;
 if (DATABASE_URL) {
@@ -19,9 +21,28 @@ let isInitialized = false;
 let categories = [];
 let products = [];
 const tokens = new Map();
-let idCounter = 100;
 
-const getNextId = () => String(++idCounter);
+const generateToken = () => {
+  return crypto.randomBytes(32).toString('hex');
+};
+
+const generateUserId = () => {
+  return crypto.randomBytes(8).toString('hex');
+};
+
+const isTokenValid = (tokenData) => {
+  if (!tokenData) return false;
+  const now = Date.now();
+  return tokenData.expiresAt > now;
+};
+
+const createTokenData = (user) => {
+  return {
+    ...user,
+    createdAt: Date.now(),
+    expiresAt: Date.now() + (TOKEN_EXPIRY_HOURS * 60 * 60 * 1000)
+  };
+};
 
 const createResponse = (res, statusCode, body) => {
   res.writeHead(statusCode, {
@@ -97,11 +118,16 @@ const handleAuth = async (req, res, method, pathname, body) => {
     
     const { username, password } = body;
     if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
-      const token = getNextId();
-      tokens.set(token, { id: '1', username, role: 'admin' });
+      const userId = generateUserId();
+      const token = generateToken();
+      const user = { id: userId, username, role: 'admin' };
+      tokens.set(token, createTokenData(user));
+      
+      console.log(`[AUTH] Login success: ${username}, token expires in ${TOKEN_EXPIRY_HOURS}h`);
+      
       return createResponse(res, 200, {
         code: 200,
-        data: { token, user: { id: '1', username, role: 'admin' } },
+        data: { token, user },
         message: '登录成功'
       });
     }
@@ -110,11 +136,18 @@ const handleAuth = async (req, res, method, pathname, body) => {
 
   if (pathname === '/api/auth/userinfo' && method === 'GET') {
     const token = getToken(req);
-    const user = tokens.get(token);
-    if (!user) {
-      return createResponse(res, 401, { code: 401, data: null, message: '未登录' });
+    const tokenData = tokens.get(token);
+    
+    if (!tokenData) {
+      return createResponse(res, 401, { code: 401, data: null, message: '未登录或登录已过期' });
     }
-    return createResponse(res, 200, { code: 200, data: user, message: '获取成功' });
+    
+    if (!isTokenValid(tokenData)) {
+      tokens.delete(token);
+      return createResponse(res, 401, { code: 401, data: null, message: '登录已过期，请重新登录' });
+    }
+    
+    return createResponse(res, 200, { code: 200, data: tokenData, message: '获取成功' });
   }
 
   if (pathname === '/api/auth/logout' && method === 'POST') {
@@ -128,6 +161,7 @@ const handleAuth = async (req, res, method, pathname, body) => {
 
 const handleCategory = async (req, res, method, pathname, body, query) => {
   const token = getToken(req);
+  const tokenData = tokens.get(token);
   
   await initializeData();
   
@@ -145,8 +179,9 @@ const handleCategory = async (req, res, method, pathname, body, query) => {
   }
 
   if (pathname === '/api/category' && method === 'POST') {
-    if (!tokens.has(token)) {
-      return createResponse(res, 401, { code: 401, data: null, message: '未登录' });
+    if (!tokenData || !isTokenValid(tokenData)) {
+      tokens.delete(token);
+      return createResponse(res, 401, { code: 401, data: null, message: '未登录或登录已过期' });
     }
     
     if (sql) {
@@ -171,7 +206,7 @@ const handleCategory = async (req, res, method, pathname, body, query) => {
       }
     } else {
       const cat = {
-        id: getNextId(),
+        id: generateToken().substring(0, 16),
         name: body.name,
         sort: body.sort || 0,
         createdAt: new Date().toISOString(),
@@ -183,8 +218,9 @@ const handleCategory = async (req, res, method, pathname, body, query) => {
   }
 
   if (pathname === '/api/category' && method === 'PUT') {
-    if (!tokens.has(token)) {
-      return createResponse(res, 401, { code: 401, data: null, message: '未登录' });
+    if (!tokenData || !isTokenValid(tokenData)) {
+      tokens.delete(token);
+      return createResponse(res, 401, { code: 401, data: null, message: '未登录或登录已过期' });
     }
     
     if (sql) {
@@ -218,8 +254,9 @@ const handleCategory = async (req, res, method, pathname, body, query) => {
   }
 
   if (pathname.startsWith('/api/category/') && method === 'DELETE') {
-    if (!tokens.has(token)) {
-      return createResponse(res, 401, { code: 401, data: null, message: '未登录' });
+    if (!tokenData || !isTokenValid(tokenData)) {
+      tokens.delete(token);
+      return createResponse(res, 401, { code: 401, data: null, message: '未登录或登录已过期' });
     }
     
     const id = pathname.split('/')[3];
@@ -246,6 +283,7 @@ const handleCategory = async (req, res, method, pathname, body, query) => {
 
 const handleProduct = async (req, res, method, pathname, body, query) => {
   const token = getToken(req);
+  const tokenData = tokens.get(token);
   
   await initializeData();
   
@@ -279,8 +317,9 @@ const handleProduct = async (req, res, method, pathname, body, query) => {
   }
 
   if (pathname === '/api/product' && method === 'POST') {
-    if (!tokens.has(token)) {
-      return createResponse(res, 401, { code: 401, data: null, message: '未登录' });
+    if (!tokenData || !isTokenValid(tokenData)) {
+      tokens.delete(token);
+      return createResponse(res, 401, { code: 401, data: null, message: '未登录或登录已过期' });
     }
     
     if (sql) {
@@ -320,7 +359,7 @@ const handleProduct = async (req, res, method, pathname, body, query) => {
       }
     } else {
       const product = {
-        id: getNextId(),
+        id: generateToken().substring(0, 16),
         ...body,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
@@ -331,8 +370,9 @@ const handleProduct = async (req, res, method, pathname, body, query) => {
   }
 
   if (pathname === '/api/product' && method === 'PUT') {
-    if (!tokens.has(token)) {
-      return createResponse(res, 401, { code: 401, data: null, message: '未登录' });
+    if (!tokenData || !isTokenValid(tokenData)) {
+      tokens.delete(token);
+      return createResponse(res, 401, { code: 401, data: null, message: '未登录或登录已过期' });
     }
     
     if (sql) {
@@ -364,8 +404,9 @@ const handleProduct = async (req, res, method, pathname, body, query) => {
   }
 
   if (pathname.startsWith('/api/product/') && method === 'DELETE') {
-    if (!tokens.has(token)) {
-      return createResponse(res, 401, { code: 401, data: null, message: '未登录' });
+    if (!tokenData || !isTokenValid(tokenData)) {
+      tokens.delete(token);
+      return createResponse(res, 401, { code: 401, data: null, message: '未登录或登录已过期' });
     }
     
     const id = pathname.split('/')[3];
