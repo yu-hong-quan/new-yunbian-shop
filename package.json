@@ -1,0 +1,16 @@
+{
+  "name": "vue-shop",
+  "version": "1.0.0",
+  "description": "小商铺商品管理平台 - 全栈项目",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:api\" \"npm run dev:web\"",
+    "dev:api": "cd api && npm run dev",
+    "dev:web": "cd web && npm run dev",
+    "build": "cd web && npm run build",
+    "build:api": "cd api && npm run build",
+    "deploy": "npm run build && vercel --prod"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.0"
+  }
+}

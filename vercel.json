@@ -1,0 +1,33 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "api/vercel-server.js",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "web/dist/**",
+      "use": "@vercel/static"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/(.*)",
+      "dest": "/api/vercel-server.js"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/web/dist/index.html"
+    }
+  ],
+  "env": {
+    "ADMIN_USERNAME": {
+      "description": "管理员用户名",
+      "value": "admin"
+    },
+    "ADMIN_PASSWORD": {
+      "description": "管理员密码",
+      "value": "admin123"
+    }
+  }
+}
