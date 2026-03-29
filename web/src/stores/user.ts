@@ -1,10 +1,9 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import { authApi, UserInfo } from '@/api';
-import { storage } from '@/utils/storage';
 
-const TOKEN_KEY = 'token';
-const USER_KEY = 'user';
+const TOKEN_KEY = 'cloud_shop_token';
+const USER_KEY = 'cloud_shop_user';
 
 export const useUserStore = defineStore('user', () => {
   const token = ref<string>('');
@@ -13,6 +12,24 @@ export const useUserStore = defineStore('user', () => {
 
   const isAdmin = computed(() => userInfo.value?.role === 'admin');
   const isLoggedIn = computed(() => !!token.value && !!userInfo.value);
+
+  const storage = {
+    get: <T>(key: string): T | null => {
+      const item = localStorage.getItem(key);
+      if (!item) return null;
+      try {
+        return JSON.parse(item) as T;
+      } catch {
+        return item as unknown as T;
+      }
+    },
+    set: <T>(key: string, value: T): void => {
+      localStorage.setItem(key, JSON.stringify(value));
+    },
+    remove: (key: string): void => {
+      localStorage.removeItem(key);
+    }
+  };
 
   const initFromStorage = () => {
     token.value = storage.get<string>(TOKEN_KEY) || '';
