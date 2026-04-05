@@ -45,11 +45,13 @@ const createResponse = (res, statusCode, body) => {
 
 const getToken = (req) => {
   const auth = req.headers.authorization;
+  console.log('[AUTH] Raw authorization header:', auth);
   if (!auth) return '';
   let token = auth.replace(/^Bearer\s+/i, '');
   if (token.startsWith('"') && token.endsWith('"')) {
     token = token.slice(1, -1);
   }
+  console.log('[AUTH] Parsed token:', token ? token.substring(0, 10) + '...' : 'empty');
   return token;
 };
 
@@ -126,9 +128,13 @@ const initializeData = async () => {
 };
 
 const saveSession = async (token, userId, username, role) => {
-  if (!sql) return;
+  if (!sql) {
+    console.log('[DB] sql is null, cannot save session');
+    return;
+  }
   try {
     const expiresAt = new Date(Date.now() + TOKEN_EXPIRY_HOURS * 60 * 60 * 1000);
+    console.log('[DB] Saving session for:', username, 'expires:', expiresAt);
     await sql`
       INSERT INTO sessions (token, user_id, username, role, expires_at)
       VALUES (${token}, ${userId}, ${username}, ${role}, ${expiresAt})
@@ -138,6 +144,7 @@ const saveSession = async (token, userId, username, role) => {
         role = ${role},
         expires_at = ${expiresAt}
     `;
+    console.log('[DB] Session saved successfully');
   } catch (error) {
     console.error('[DB] Save session error:', error.message);
   }
@@ -149,15 +156,18 @@ const getSession = async (token) => {
     return null;
   }
   try {
-    console.log('[AUTH] Looking for session with token:', token.substring(0, 10) + '...');
+    console.log('[DB] Querying session for token:', token ? token.substring(0, 10) + '...' : 'empty');
     const result = await sql`
       SELECT * FROM sessions 
       WHERE token = ${token} AND expires_at > NOW()
     `;
-    console.log('[AUTH] Session query result:', result.length > 0 ? 'found' : 'not found');
+    console.log('[DB] Session found:', result.length > 0 ? 'yes' : 'no');
+    if (result.length > 0) {
+      console.log('[DB] Session user:', result[0].username);
+    }
     return result.length > 0 ? result[0] : null;
   } catch (error) {
-    console.error('[DB] Get session error:', error.message);
+    console.error('[DB] Get session error:', error.message, error.stack);
     return null;
   }
 };
