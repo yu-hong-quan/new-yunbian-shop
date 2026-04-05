@@ -70,11 +70,14 @@ const parseBody = (req) => {
 };
 
 console.log('[VERCEL] Server initialized');
-console.log('[VERCEL] DATABASE_URL:', DATABASE_URL ? 'set' : 'not set');
+console.log('[VERCEL] DATABASE_URL:', DATABASE_URL ? 'set (length: ' + DATABASE_URL.length + ')' : 'not set');
 console.log('[VERCEL] sql:', sql ? 'initialized' : 'null');
 
 const initDatabase = async () => {
-  if (!sql) return;
+  if (!sql) {
+    console.log('[DB] Cannot init database, sql is null');
+    return;
+  }
   
   try {
     await sql`
