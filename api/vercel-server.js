@@ -140,12 +140,17 @@ const saveSession = async (token, userId, username, role) => {
 };
 
 const getSession = async (token) => {
-  if (!sql) return null;
+  if (!sql) {
+    console.log('[AUTH] sql is null, returning null');
+    return null;
+  }
   try {
+    console.log('[AUTH] Looking for session with token:', token.substring(0, 10) + '...');
     const result = await sql`
       SELECT * FROM sessions 
       WHERE token = ${token} AND expires_at > NOW()
     `;
+    console.log('[AUTH] Session query result:', result.length > 0 ? 'found' : 'not found');
     return result.length > 0 ? result[0] : null;
   } catch (error) {
     console.error('[DB] Get session error:', error.message);
@@ -235,7 +240,9 @@ const handleCategory = async (req, res, method, pathname, body, query) => {
   }
 
   if (pathname === '/api/category' && method === 'POST') {
+    console.log('[CATEGORY] POST - verifying auth');
     const user = await verifyAuth(req);
+    console.log('[CATEGORY] User:', user);
     if (!user) {
       return createResponse(res, 401, { code: 401, data: null, message: '未登录或登录已过期' });
     }
