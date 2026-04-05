@@ -42,7 +42,11 @@ const createResponse = (res, statusCode, body) => {
 const getToken = (req) => {
   const auth = req.headers.authorization;
   if (!auth) return '';
-  return auth.replace('Bearer ', '');
+  let token = auth.replace(/^Bearer\s+/i, '');
+  if (token.startsWith('"') && token.endsWith('"')) {
+    token = token.slice(1, -1);
+  }
+  return token;
 };
 
 const parseBody = (req) => {

@@ -14,17 +14,18 @@ export const useUserStore = defineStore('user', () => {
   const isLoggedIn = computed(() => !!token.value && !!userInfo.value);
 
   const storage = {
-    get: <T>(key: string): T | null => {
+    get: (key: string): string | null => {
       const item = localStorage.getItem(key);
       if (!item) return null;
       try {
-        return JSON.parse(item) as T;
+        const parsed = JSON.parse(item);
+        return typeof parsed === 'string' ? parsed : item;
       } catch {
-        return item as unknown as T;
+        return item;
       }
     },
-    set: <T>(key: string, value: T): void => {
-      localStorage.setItem(key, JSON.stringify(value));
+    set: (key: string, value: string): void => {
+      localStorage.setItem(key, value);
     },
     remove: (key: string): void => {
       localStorage.removeItem(key);
@@ -32,8 +33,9 @@ export const useUserStore = defineStore('user', () => {
   };
 
   const initFromStorage = () => {
-    token.value = storage.get<string>(TOKEN_KEY) || '';
-    userInfo.value = storage.get<UserInfo>(USER_KEY) || null;
+    token.value = storage.get(TOKEN_KEY) || '';
+    const userStr = localStorage.getItem(USER_KEY);
+    userInfo.value = userStr ? JSON.parse(userStr) : null;
   };
 
   const setToken = (newToken: string) => {
@@ -43,7 +45,7 @@ export const useUserStore = defineStore('user', () => {
 
   const setUserInfo = (info: UserInfo) => {
     userInfo.value = info;
-    storage.set(USER_KEY, info);
+    localStorage.setItem(USER_KEY, JSON.stringify(info));
   };
 
   const login = async (username: string, password: string) => {
