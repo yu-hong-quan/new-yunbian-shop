@@ -37,6 +37,7 @@ const createResponse = (res, statusCode, body) => {
     'Access-Control-Allow-Headers': 'Content-Type, Authorization'
   });
   res.end(JSON.stringify(body));
+  throw new Error('RESPONSE_SENT');
 };
 
 const getToken = (req) => {
@@ -530,8 +531,11 @@ const handler = async (req, res) => {
 
     createResponse(res, 404, { code: 404, data: null, message: 'Not Found' });
   } catch (error) {
+    if (error.message === 'RESPONSE_SENT') return;
     console.error('[VERCEL] Error:', error);
-    createResponse(res, 500, { code: 500, data: null, message: 'Internal Server Error' });
+    if (!res.headersSent) {
+      createResponse(res, 500, { code: 500, data: null, message: 'Internal Server Error' });
+    }
   }
 };
 
