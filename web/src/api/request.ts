@@ -30,8 +30,12 @@ request.interceptors.request.use(
 );
 
 request.interceptors.response.use(
-  (response: AxiosResponse) => response.data,
+  (response: AxiosResponse) => {
+    console.log('[API] Response:', response.status, response.data);
+    return response.data;
+  },
   (error) => {
+    console.log('[API] Error:', error.response?.status, error.response?.data);
     if (error.response?.status === 401) {
       localStorage.removeItem('cloud_shop_token');
       localStorage.removeItem('cloud_shop_user');
