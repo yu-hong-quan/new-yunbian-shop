@@ -29,7 +29,11 @@ const generateUserId = () => {
   return crypto.randomBytes(8).toString('hex');
 };
 
+let responseSent = false;
+
 const createResponse = (res, statusCode, body) => {
+  if (responseSent) return;
+  responseSent = true;
   res.writeHead(statusCode, {
     'Content-Type': 'application/json',
     'Access-Control-Allow-Origin': '*',
@@ -37,7 +41,6 @@ const createResponse = (res, statusCode, body) => {
     'Access-Control-Allow-Headers': 'Content-Type, Authorization'
   });
   res.end(JSON.stringify(body));
-  throw new Error('RESPONSE_SENT');
 };
 
 const getToken = (req) => {
@@ -494,6 +497,8 @@ const handleProduct = async (req, res, method, pathname, body, query) => {
 };
 
 const handler = async (req, res) => {
+  responseSent = false;
+  
   const parsedUrl = url.parse(req.url, true);
   const pathname = parsedUrl.pathname;
   const query = parsedUrl.query;
@@ -521,19 +526,18 @@ const handler = async (req, res) => {
     const body = await parseBody(req);
 
     let result = await handleAuth(req, res, method, pathname, body);
-    if (result) return;
+    if (result || responseSent) return;
 
     result = await handleCategory(req, res, method, pathname, body, query);
-    if (result) return;
+    if (result || responseSent) return;
 
     result = await handleProduct(req, res, method, pathname, body, query);
-    if (result) return;
+    if (result || responseSent) return;
 
     createResponse(res, 404, { code: 404, data: null, message: 'Not Found' });
   } catch (error) {
-    if (error.message === 'RESPONSE_SENT') return;
     console.error('[VERCEL] Error:', error);
-    if (!res.headersSent) {
+    if (!responseSent) {
       createResponse(res, 500, { code: 500, data: null, message: 'Internal Server Error' });
     }
   }
