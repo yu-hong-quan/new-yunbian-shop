@@ -20,7 +20,6 @@ if (DATABASE_URL) {
 let isInitialized = false;
 let categories = [];
 let products = [];
-const tokens = new Map();
 
 const generateToken = () => {
   return crypto.randomBytes(32).toString('hex');
@@ -28,20 +27,6 @@ const generateToken = () => {
 
 const generateUserId = () => {
   return crypto.randomBytes(8).toString('hex');
-};
-
-const isTokenValid = (tokenData) => {
-  if (!tokenData) return false;
-  const now = Date.now();
-  return tokenData.expiresAt > now;
-};
-
-const createTokenData = (user) => {
-  return {
-    ...user,
-    createdAt: Date.now(),
-    expiresAt: Date.now() + (TOKEN_EXPIRY_HOURS * 60 * 60 * 1000)
-  };
 };
 
 const createResponse = (res, statusCode, body) => {
@@ -78,6 +63,26 @@ console.log('[VERCEL] Server initialized');
 console.log('[VERCEL] DATABASE_URL:', DATABASE_URL ? 'set' : 'not set');
 console.log('[VERCEL] sql:', sql ? 'initialized' : 'null');
 
+const initDatabase = async () => {
+  if (!sql) return;
+  
+  try {
+    await sql`
+      CREATE TABLE IF NOT EXISTS sessions (
+        token VARCHAR(128) PRIMARY KEY,
+        user_id VARCHAR(64) NOT NULL,
+        username VARCHAR(100) NOT NULL,
+        role VARCHAR(20) NOT NULL,
+        expires_at TIMESTAMP NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `;
+    console.log('[DB] Sessions table ready');
+  } catch (error) {
+    console.error('[DB] Failed to init sessions table:', error.message);
+  }
+};
+
 const initializeData = async () => {
   if (isInitialized || !sql) return;
   
@@ -112,22 +117,65 @@ const initializeData = async () => {
   }
 };
 
+const saveSession = async (token, userId, username, role) => {
+  if (!sql) return;
+  try {
+    const expiresAt = new Date(Date.now() + TOKEN_EXPIRY_HOURS * 60 * 60 * 1000);
+    await sql`
+      INSERT INTO sessions (token, user_id, username, role, expires_at)
+      VALUES (${token}, ${userId}, ${username}, ${role}, ${expiresAt})
+      ON CONFLICT (token) DO UPDATE SET
+        user_id = ${userId},
+        username = ${username},
+        role = ${role},
+        expires_at = ${expiresAt}
+    `;
+  } catch (error) {
+    console.error('[DB] Save session error:', error.message);
+  }
+};
+
+const getSession = async (token) => {
+  if (!sql) return null;
+  try {
+    const result = await sql`
+      SELECT * FROM sessions 
+      WHERE token = ${token} AND expires_at > NOW()
+    `;
+    return result.length > 0 ? result[0] : null;
+  } catch (error) {
+    console.error('[DB] Get session error:', error.message);
+    return null;
+  }
+};
+
+const deleteSession = async (token) => {
+  if (!sql) return;
+  try {
+    await sql`DELETE FROM sessions WHERE token = ${token}`;
+  } catch (error) {
+    console.error('[DB] Delete session error:', error.message);
+  }
+};
+
 const handleAuth = async (req, res, method, pathname, body) => {
   if (pathname === '/api/auth/login' && method === 'POST') {
+    await initDatabase();
     await initializeData();
     
     const { username, password } = body;
     if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
       const userId = generateUserId();
       const token = generateToken();
-      const user = { id: userId, username, role: 'admin' };
-      tokens.set(token, createTokenData(user));
+      const role = 'admin';
       
-      console.log(`[AUTH] Login success: ${username}, token expires in ${TOKEN_EXPIRY_HOURS}h`);
+      await saveSession(token, userId, username, role);
+      
+      console.log(`[AUTH] Login success: ${username}`);
       
       return createResponse(res, 200, {
         code: 200,
-        data: { token, user },
+        data: { token, user: { id: userId, username, role } },
         message: '登录成功'
       });
     }
@@ -136,33 +184,37 @@ const handleAuth = async (req, res, method, pathname, body) => {
 
   if (pathname === '/api/auth/userinfo' && method === 'GET') {
     const token = getToken(req);
-    const tokenData = tokens.get(token);
+    const session = await getSession(token);
     
-    if (!tokenData) {
+    if (!session) {
       return createResponse(res, 401, { code: 401, data: null, message: '未登录或登录已过期' });
     }
     
-    if (!isTokenValid(tokenData)) {
-      tokens.delete(token);
-      return createResponse(res, 401, { code: 401, data: null, message: '登录已过期，请重新登录' });
-    }
-    
-    return createResponse(res, 200, { code: 200, data: tokenData, message: '获取成功' });
+    return createResponse(res, 200, {
+      code: 200,
+      data: { id: session.user_id, username: session.username, role: session.role },
+      message: '获取成功'
+    });
   }
 
   if (pathname === '/api/auth/logout' && method === 'POST') {
     const token = getToken(req);
-    tokens.delete(token);
+    await deleteSession(token);
     return createResponse(res, 200, { code: 200, data: null, message: '退出成功' });
   }
 
   return null;
 };
 
-const handleCategory = async (req, res, method, pathname, body, query) => {
+const verifyAuth = async (req) => {
   const token = getToken(req);
-  const tokenData = tokens.get(token);
-  
+  const session = await getSession(token);
+  if (!session) return null;
+  return { id: session.user_id, username: session.username, role: session.role };
+};
+
+const handleCategory = async (req, res, method, pathname, body, query) => {
+  await initDatabase();
   await initializeData();
   
   if (pathname === '/api/category' && method === 'GET') {
@@ -179,8 +231,8 @@ const handleCategory = async (req, res, method, pathname, body, query) => {
   }
 
   if (pathname === '/api/category' && method === 'POST') {
-    if (!tokenData || !isTokenValid(tokenData)) {
-      tokens.delete(token);
+    const user = await verifyAuth(req);
+    if (!user) {
       return createResponse(res, 401, { code: 401, data: null, message: '未登录或登录已过期' });
     }
     
@@ -218,8 +270,8 @@ const handleCategory = async (req, res, method, pathname, body, query) => {
   }
 
   if (pathname === '/api/category' && method === 'PUT') {
-    if (!tokenData || !isTokenValid(tokenData)) {
-      tokens.delete(token);
+    const user = await verifyAuth(req);
+    if (!user) {
       return createResponse(res, 401, { code: 401, data: null, message: '未登录或登录已过期' });
     }
     
@@ -254,8 +306,8 @@ const handleCategory = async (req, res, method, pathname, body, query) => {
   }
 
   if (pathname.startsWith('/api/category/') && method === 'DELETE') {
-    if (!tokenData || !isTokenValid(tokenData)) {
-      tokens.delete(token);
+    const user = await verifyAuth(req);
+    if (!user) {
       return createResponse(res, 401, { code: 401, data: null, message: '未登录或登录已过期' });
     }
     
@@ -282,9 +334,7 @@ const handleCategory = async (req, res, method, pathname, body, query) => {
 };
 
 const handleProduct = async (req, res, method, pathname, body, query) => {
-  const token = getToken(req);
-  const tokenData = tokens.get(token);
-  
+  await initDatabase();
   await initializeData();
   
   if (pathname === '/api/product' && method === 'GET') {
@@ -317,8 +367,8 @@ const handleProduct = async (req, res, method, pathname, body, query) => {
   }
 
   if (pathname === '/api/product' && method === 'POST') {
-    if (!tokenData || !isTokenValid(tokenData)) {
-      tokens.delete(token);
+    const user = await verifyAuth(req);
+    if (!user) {
       return createResponse(res, 401, { code: 401, data: null, message: '未登录或登录已过期' });
     }
     
@@ -370,8 +420,8 @@ const handleProduct = async (req, res, method, pathname, body, query) => {
   }
 
   if (pathname === '/api/product' && method === 'PUT') {
-    if (!tokenData || !isTokenValid(tokenData)) {
-      tokens.delete(token);
+    const user = await verifyAuth(req);
+    if (!user) {
       return createResponse(res, 401, { code: 401, data: null, message: '未登录或登录已过期' });
     }
     
@@ -404,8 +454,8 @@ const handleProduct = async (req, res, method, pathname, body, query) => {
   }
 
   if (pathname.startsWith('/api/product/') && method === 'DELETE') {
-    if (!tokenData || !isTokenValid(tokenData)) {
-      tokens.delete(token);
+    const user = await verifyAuth(req);
+    if (!user) {
       return createResponse(res, 401, { code: 401, data: null, message: '未登录或登录已过期' });
     }
     
@@ -438,13 +488,11 @@ const handler = async (req, res) => {
   const method = req.method;
 
   console.log(`[VERCEL] ${method} ${pathname}`);
-  console.log(`[VERCEL] Full URL: ${req.url}`);
 
   if (method === 'OPTIONS') {
     return createResponse(res, 200, null);
   }
 
-  // Health check endpoint
   if (pathname === '/api/health' && method === 'GET') {
     return createResponse(res, 200, {
       code: 200,
@@ -469,7 +517,6 @@ const handler = async (req, res) => {
     result = await handleProduct(req, res, method, pathname, body, query);
     if (result) return;
 
-    console.log(`[VERCEL] No handler found for ${method} ${pathname}`);
     createResponse(res, 404, { code: 404, data: null, message: 'Not Found' });
   } catch (error) {
     console.error('[VERCEL] Error:', error);

@@ -27,6 +27,19 @@ CREATE TABLE IF NOT EXISTS products (
 CREATE INDEX IF NOT EXISTS idx_products_category ON products(category_id);
 CREATE INDEX IF NOT EXISTS idx_products_name ON products(name);
 
+-- 创建 sessions 表 (用于存储登录会话)
+CREATE TABLE IF NOT EXISTS sessions (
+  token VARCHAR(128) PRIMARY KEY,
+  user_id VARCHAR(64) NOT NULL,
+  username VARCHAR(100) NOT NULL,
+  role VARCHAR(20) NOT NULL,
+  expires_at TIMESTAMP NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- 定期清理过期 session (可以设置定时任务或使用 Neon 的自动过期)
+CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+
 -- 插入初始分类
 INSERT INTO categories (id, name, sort) VALUES
   ('11111111-1111-1111-1111-111111111111', '美食', 1),
