@@ -79,6 +79,26 @@ export const useUserStore = defineStore('user', () => {
     }
   };
 
+  const checkLogin = async (): Promise<boolean> => {
+    initFromStorage();
+    if (!token.value) return false;
+    
+    try {
+      const res = await authApi.getUserInfo();
+      if (res.code === 200) {
+        userInfo.value = res.data;
+        return true;
+      }
+    } catch (error) {
+      console.error('Check login failed:', error);
+    }
+    token.value = '';
+    userInfo.value = null;
+    storage.remove(TOKEN_KEY);
+    storage.remove(USER_KEY);
+    return false;
+  };
+
   return {
     token,
     userInfo,
@@ -89,6 +109,7 @@ export const useUserStore = defineStore('user', () => {
     setToken,
     setUserInfo,
     login,
-    logout
+    logout,
+    checkLogin
   };
 });
